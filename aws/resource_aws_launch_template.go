@@ -170,6 +170,11 @@ func resourceAwsLaunchTemplate() *schema.Resource {
 				},
 			},
 
+			"create_time": {
+				Type:     schema.TypeString,
+				Computed: true,
+			},
+
 			"credit_specification": {
 				Type:     schema.TypeList,
 				Optional: true,
@@ -594,6 +599,7 @@ func resourceAwsLaunchTemplateRead(d *schema.ResourceData, meta interface{}) err
 	d.Set("latest_version", lt.LatestVersionNumber)
 	d.Set("default_version", lt.DefaultVersionNumber)
 	d.Set("tags", tagsToMap(lt.Tags))
+	d.Set("create_time", aws.TimeValue(lt.CreateTime).Format(time.RFC3339))
 
 	arn := arn.ARN{
 		Partition: meta.(*AWSClient).partition,

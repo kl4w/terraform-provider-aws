@@ -5,6 +5,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/arn"
@@ -18,7 +19,7 @@ func dataSourceAwsLaunchTemplate() *schema.Resource {
 		Schema: map[string]*schema.Schema{
 			"name": {
 				Type:     schema.TypeString,
-				Required: true,
+				Optional: true,
 			},
 			"description": {
 				Type:     schema.TypeString,
@@ -92,6 +93,11 @@ func dataSourceAwsLaunchTemplate() *schema.Resource {
 					},
 				},
 			},
+			"create_time": {
+				Type:     schema.TypeString,
+				Optional: true,
+				Computed: true,
+			},
 			"credit_specification": {
 				Type:     schema.TypeList,
 				Computed: true,
@@ -124,6 +130,7 @@ func dataSourceAwsLaunchTemplate() *schema.Resource {
 					},
 				},
 			},
+			"filter": ec2CustomFiltersSchema(),
 			"iam_instance_profile": {
 				Type:     schema.TypeList,
 				Computed: true,
@@ -343,11 +350,28 @@ func dataSourceAwsLaunchTemplate() *schema.Resource {
 func dataSourceAwsLaunchTemplateRead(d *schema.ResourceData, meta interface{}) error {
 	conn := meta.(*AWSClient).ec2conn
 
-	log.Printf("[DEBUG] Reading launch template %s", d.Get("name"))
+	input := &ec2.DescribeLaunchTemplatesInput{}
 
-	dlt, err := conn.DescribeLaunchTemplates(&ec2.DescribeLaunchTemplatesInput{
-		LaunchTemplateNames: []*string{aws.String(d.Get("name").(string))},
-	})
+	if v, ok := d.GetOk("name"); ok && v.(string) != "" {
+		input.LaunchTemplateNames = []*string{aws.String(v.(string))}
+	}
+
+	input.Filters = buildEC2AttributeFilterList(
+		map[string]string{
+			"create-time": d.Get("create_time").(string),
+		})
+	input.Filters = append(input.Filters, buildEC2TagFilterList(
+		tagsFromMap(d.Get("tags").(map[string]interface{})),
+	)...)
+	input.Filters = append(input.Filters, buildEC2CustomFilterList(
+		d.Get("filter").(*schema.Set),
+	)...)
+	if len(input.Filters) == 0 {
+		input.Filters = nil
+	}
+
+	log.Printf("[DEBUG] Reading launch template %s", input)
+	dlt, err := conn.DescribeLaunchTemplates(input)
 
 	if isAWSErr(err, ec2.LaunchTemplateErrorCodeLaunchTemplateIdDoesNotExist, "") {
 		log.Printf("[WARN] launch template (%s) not found - removing from state", d.Id())
@@ -372,14 +396,16 @@ func dataSourceAwsLaunchTemplateRead(d *schema.ResourceData, meta interface{}) e
 		return nil
 	}
 
-	log.Printf("[DEBUG] Found launch template %s", d.Id())
-
 	lt := dlt.LaunchTemplates[0]
 	d.SetId(*lt.LaunchTemplateId)
+
+	log.Printf("[DEBUG] Found launch template %s", d.Id())
+
 	d.Set("name", lt.LaunchTemplateName)
 	d.Set("latest_version", lt.LatestVersionNumber)
 	d.Set("default_version", lt.DefaultVersionNumber)
 	d.Set("tags", tagsToMap(lt.Tags))
+	d.Set("create_time", aws.TimeValue(lt.CreateTime).Format(time.RFC3339))
 
 	arn := arn.ARN{
 		Partition: meta.(*AWSClient).partition,
